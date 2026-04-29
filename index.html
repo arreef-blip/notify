@@ -1,1 +1,315 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบลงเวลางาน - Minew E8</title>
+  <style>
+    body {
+      font-family: 'Prompt', sans-serif;
+      background: #f0f4f8;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      width: 90%;
+      max-width: 450px;
+      margin: 10vh auto 0 auto;
+      text-align: center;
+      background: white;
+      padding: 2rem;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    h2 { color: #333; margin-bottom: 1rem; }
+    .input-group { margin-bottom: 1rem; position: relative; text-align: left; }
+    label { font-size: 0.9rem; color: #666; margin-bottom: 5px; display: block; }
+    
+    input, select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      outline: none;
+    }
+    input:focus { border-color: #2b7a78; }
 
+    /* Autocomplete Design */
+    .autocomplete-items {
+      position: absolute;
+      border: 1px solid #ddd;
+      border-top: none;
+      z-index: 99;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background-color: #fff;
+      max-height: 200px;
+      overflow-y: auto;
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .autocomplete-items div {
+      padding: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f1f1f1;
+    }
+    .autocomplete-items div:hover { background-color: #f0f0f0; }
+    .autocomplete-active { background-color: #e9e9e9 !important; color: #2b7a78; font-weight: bold; }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      font-size: 1.1rem;
+      color: white;
+      background-color: #2b7a78;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.3s;
+      margin-top: 10px;
+    }
+    button:hover { background-color: #205c5a; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+    #status {
+      margin-top: 1.5rem;
+      font-size: 0.95rem;
+      font-weight: bold;
+      min-height: 40px;
+      padding: 10px;
+      border-radius: 8px;
+    }
+    footer { margin-top: 2rem; font-size: 0.85rem; color: #888; text-align: center; }
+
+    #toast {
+      visibility: hidden;
+      min-width: 280px;
+      margin-left: -140px;
+      background-color: #333;
+      color: #fff;
+      text-align: center;
+      border-radius: 50px;
+      padding: 16px;
+      position: fixed;
+      z-index: 1000;
+      left: 50%;
+      bottom: 30px;
+      font-size: 1rem;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      transition: visibility 0s, opacity 0.5s linear;
+      opacity: 0;
+    }
+
+    #toast.show {
+      visibility: visible;
+      opacity: 1;
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <div class="container">
+    <h2>Check-in / Out</h2>
+    
+    <p id="iosNote" style="display:none; font-size: 12px; color: #d9534f; font-weight: bold; margin-bottom: 10px;">
+      ℹ️ สำหรับ iPhone/iPad กรุณาใช้งานผ่านแอป Bluefy เท่านั้น
+    </p>
+    
+    <p style="font-size: 14px; color: #777; margin-bottom: 20px;">กรุณาเปิด Bluetooth ก่อนลงเวลา</p>
+
+    <div class="input-group">
+      <label>ชื่อ-นามสกุลพนักงาน</label>
+      <input type="text" id="empName" placeholder="พิมพ์เพื่อค้นหาชื่อ..." autocomplete="off">
+    </div>
+
+    <div class="input-group">
+      <label>ประเภทรายการ</label>
+      <select id="statusSelect">
+        <option value="เข้า">เข้างาน (Check-In)</option>
+        <option value="ออก">ออกงาน (Check-Out)</option>
+      </select>
+    </div>
+
+    <button id="btnScan" onclick="scanAndSubmit()">สแกน Beacon และบันทึก</button>
+    <div id="status">พร้อมใช้งาน</div>
+  </div>
+
+  <div id="toast"></div>
+
+  <footer>โรงเรียนศิริธรรมวิทยา V1.2.0 (iOS Supported)</footer>
+
+  <script>
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzjIoOE6J4Eo4zNPlM1Tq8d0qpi1P8Zz30BhaUhhDgXZszy4ukc8HW1jHec8kAxCXWJDA/exec";
+
+    const teachers = [
+      "มารียะ มะดีแมง", "รุสนานี แย", "มูฮำมัดซูลฮัน ลามะทา", "กูนัสวาตี นาราวงศ์", "คอตีมะห์ ลามะทา",
+      "คอลีเยาะ กามา", "คอลีเยาะ อาลี", "เจ๊ะบารีย๊ะ มะสาและ", "ซะห์รียะห์ ลามะทา", "ซาเปียน เจ๊ะแว",
+      "ซารีฮา อามิงตีเยาะ", "โซเฟีย เจะกอเดร์", "โซเฟียรา วาเฮ็ง", "ไซตง ตะโละดิง", "ดรุณี บิลังโหลด",
+      "ดอเลาะ นิมิง", "ตอมีซี มูซอ", "ตอยีบ๊ะ วาเด็ง", "ทัพทิวา นามวงษ์", "นัสรินทร์ ดอเลาะ",
+      "นารีมาน ลามะทา", "นาอีด๊ะ เซ็ง", "นูอาชียะห์ เจะลี", "นูไอนี นิปิ", "ปัทมา ยูโซะ",
+      "พาอีซะห์ สามาเล๊ะ", "แพนดี มะลือกะ", "ฟิตรี สะเด็ง", "มะดาเฮ ลามะทา", "มะตีรมีซี ตาเหตาแซ",
+      "มะรอซี แดเมาะเล็ง", "มะสอปี ปิ", "มัสเต๊าะ ดือราอิง", "มุนตาด บิลังโหลด", "มุสลิม ดือราแมง",
+      "มูฮัมมัดตอเฮร์ ลามะทา", "โมฮามัสกามาดิง กายูนิ", "ยามีละ ดอเล๊าะ", "รอซีนะ ลามะทา",
+      "รอบีอะ มาหะหม๊ะ", "รอสีหย๊ะ มะดิง", "แวดุลกอเดร์ ตูแป", "แวอามีเนาะ ตูแป", "สนีดา สนิ",
+      "สุไวบ๊ะ สาแม", "อณิรุต อาแว", "อรวรรณ ฮะ", "อะวาติฟ หะยีมาหะมะ", "อะห์ลาม ตาเฮ",
+      "อับดุลมุสตอฟา รอแง", "อับดุลรอมาน สะมาโระ", "อับดุลเลาะ ปูเตะ", "อับดุลฮาเล็ม ตาเล๊ะ",
+      "อัสมะ บูดิง", "อัสมีดา มายิ", "อาซีซะห์ แตหลง", "อาซียะห์ ยามา", "อาตีย๊ะ โซะ",
+      "อาพีพี ลามะทา", "อามีเนาะ เลาะมะ", "อามีเนาะ รีขะ", "อารีฟ เจะแต", "อารุณี แบรอซะแม",
+      "อาลาวียะห์ กาเจ", "อาแว มูเส็ง", "อาสนี เจ๊ะฮะ", "อาหะมะ ลามะทา", "อาหามะ ซาแมง",
+      "อูมัยมูเน๊าะ สะมะแอ", "เอกลักษณ์ กาดัสซา", "ฮามีดะห์ มะเจ๊ะหะ", "มะนาเซร์ อาแด"
+    ];
+
+    // เช็คอุปกรณ์ iOS เพื่อแสดงคำแนะนำ
+    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    if (isIOS) {
+        document.getElementById("iosNote").style.display = "block";
+    }
+
+    function showToast(message, bgColor = "#2b7a78") {
+      const toast = document.getElementById("toast");
+      toast.innerText = message;
+      toast.style.backgroundColor = bgColor;
+      toast.classList.add("show");
+      setTimeout(() => {
+        toast.classList.remove("show");
+      }, 3000);
+    }
+
+    function autocomplete(inp, arr) {
+      let currentFocus;
+      inp.addEventListener("input", function(e) {
+        let val = this.value;
+        closeAllLists();
+        if (!val) return false;
+        currentFocus = -1;
+        const listDiv = document.createElement("div");
+        listDiv.setAttribute("id", this.id + "-autocomplete-list");
+        listDiv.setAttribute("class", "autocomplete-items");
+        this.parentNode.appendChild(listDiv);
+
+        arr.forEach((teacher) => {
+          if (teacher.includes(val)) {
+            const itemDiv = document.createElement("div");
+            const matchIndex = teacher.indexOf(val);
+            itemDiv.innerHTML = teacher.substring(0, matchIndex) + 
+                                "<strong>" + teacher.substring(matchIndex, matchIndex + val.length) + "</strong>" + 
+                                teacher.substring(matchIndex + val.length);
+            itemDiv.addEventListener("click", function() {
+              inp.value = teacher;
+              closeAllLists();
+            });
+            listDiv.appendChild(itemDiv);
+          }
+        });
+      });
+
+      inp.addEventListener("keydown", function(e) {
+        let x = document.getElementById(this.id + "-autocomplete-list");
+        if (x) x = x.getElementsByTagName("div");
+        if (e.keyCode == 40) {
+          currentFocus++;
+          addActive(x);
+        } else if (e.keyCode == 38) {
+          currentFocus--;
+          addActive(x);
+        } else if (e.keyCode == 13) {
+          e.preventDefault();
+          if (currentFocus > -1 && x) x[currentFocus].click();
+        }
+      });
+
+      function addActive(x) {
+        if (!x) return false;
+        removeActive(x);
+        if (currentFocus >= x.length) currentFocus = 0;
+        if (currentFocus < 0) currentFocus = x.length - 1;
+        x[currentFocus].classList.add("autocomplete-active");
+      }
+
+      function removeActive(x) {
+        for (let i = 0; i < x.length; i++) x[i].classList.remove("autocomplete-active");
+      }
+
+      function closeAllLists(elmnt) {
+        const items = document.getElementsByClassName("autocomplete-items");
+        for (let i = 0; i < items.length; i++) {
+          if (elmnt != items[i] && elmnt != inp) items[i].parentNode.removeChild(items[i]);
+        }
+      }
+
+      document.addEventListener("click", (e) => closeAllLists(e.target));
+    }
+
+    autocomplete(document.getElementById("empName"), teachers);
+
+    async function scanAndSubmit() {
+      const statusEl = document.getElementById("status");
+      const btn = document.getElementById("btnScan");
+      const name = document.getElementById("empName").value;
+
+      if (!name || !teachers.includes(name)) {
+        showToast("⚠️ กรุณาเลือกชื่อที่ถูกต้อง", "#d9534f");
+        return;
+      }
+
+      btn.disabled = true;
+      statusEl.innerText = "🔍 กำลังสแกนหาสัญญาณ Beacon...";
+      statusEl.style.color = "#007bff";
+      statusEl.style.backgroundColor = "#e7f3ff";
+
+      try {
+        // ขอเข้าถึง Bluetooth
+        const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+
+        // เตรียมข้อมูลส่งไปคอลัมน์ E (ตัด F ออกโดยไม่ส่ง deviceName ไปใน payload)
+        const beaconRef = device.name || device.id.substring(0, 8);
+        const payload = {
+          employeeName: name,
+          employeeId: "-", 
+          status: document.getElementById("statusSelect").value,
+          beaconId: beaconRef // ค่านี้จะไปลงที่คอลัมน์ E เพียงค่าเดียว
+        };
+
+        statusEl.innerText = "⏳ พบอุปกรณ์! กำลังบันทึกข้อมูล...";
+        statusEl.style.color = "#856404";
+        statusEl.style.backgroundColor = "#fff3cd";
+
+        // ส่งข้อมูลไป Google Sheets
+        await fetch(GOOGLE_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          body: JSON.stringify(payload)
+        });
+
+        // แสดง Toast แจ้งความสำเร็จพร้อมระบุจุดที่พบ
+        showToast(`✅ ลงเวลาสำเร็จที่จุด: ${device.name || beaconRef}`);
+        
+        statusEl.innerText = "✅ บันทึกข้อมูลสำเร็จ!";
+        statusEl.style.color = "#155724";
+        statusEl.style.backgroundColor = "#d4edda";
+        
+        setTimeout(() => {
+          document.getElementById("empName").value = "";
+          statusEl.innerText = "พร้อมใช้งาน";
+          statusEl.style.color = "#555";
+          statusEl.style.backgroundColor = "transparent";
+        }, 1500);
+
+      } catch (error) {
+        let errorMsg = error.name === 'NotFoundError' ? "ไม่พบอุปกรณ์" : error.message;
+        statusEl.innerText = "❌ ผิดพลาด: " + errorMsg;
+        statusEl.style.color = "#721c24";
+        statusEl.style.backgroundColor = "#f8d7da";
+        showToast("❌ " + errorMsg, "#d9534f");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
