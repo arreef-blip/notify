@@ -1,1 +1,206 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบลงเวลา Beacon - ศิริธรรมวิทยา</title>
+  <style>
+    body { font-family: 'Prompt', sans-serif; background: #f0f4f8; margin: 0; padding: 0; }
+    .container { width: 90%; max-width: 450px; margin: 5vh auto; text-align: center; background: white; padding: 2rem; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    h2 { color: #2b7a78; margin-bottom: 1.5rem; }
+    .input-group { margin-bottom: 1.2rem; position: relative; text-align: left; }
+    label { font-size: 0.9rem; color: #666; margin-bottom: 8px; display: block; font-weight: bold; }
+    input, select { width: 100%; box-sizing: border-box; padding: 14px; font-size: 16px; border: 1px solid #e0e0e0; border-radius: 12px; outline: none; }
+    
+    .btn { width: 100%; padding: 15px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; font-size: 1rem; }
+    .btn-qr { background-color: #6f42c1; color: white; } /* ปุ่มสแกน QR */
+    .btn-scan { background-color: #007bff; color: white; }
+    .btn-submit { background-color: #2b7a78; color: white; }
+    .btn-submit:disabled { background-color: #ccc; }
 
+    #reader { width: 100%; border-radius: 12px; margin-top: 10px; display: none; }
+    .info-box { background: #eef2f7; padding: 15px; border-radius: 12px; margin: 15px 0; text-align: left; border-left: 5px solid #6f42c1; }
+    
+    .autocomplete-items { position: absolute; border: 1px solid #ddd; z-index: 99; top: 100%; left: 0; right: 0; background-color: #fff; max-height: 200px; overflow-y: auto; border-radius: 0 0 12px 12px; }
+    .autocomplete-items div { padding: 12px; cursor: pointer; border-bottom: 1px solid #f1f1f1; }
+    .hidden { display: none; }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+<body>
+
+  <div class="container">
+    <h2>ลงเวลาเข้า-ออก ด้วย Beacon</h2>
+    
+    <div class="input-group">
+      <label>👤 ชื่อ-นามสกุลผู้สอน</label>
+      <input type="text" id="empName" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off">
+    </div>
+
+    <div class="input-group">
+      <label>📝 ประเภทรายการ</label>
+      <select id="statusSelect">
+        <option value="เข้า">เข้าสอน (Check-In)</option>
+        <option value="ออก">ออกสอน (Check-Out)</option>
+      </select>
+    </div>
+
+    <hr style="border: 0.5px solid #eee; margin: 20px 0;">
+
+    <div id="setup-section">
+      <p style="font-size: 0.9rem; color: #666;">พบอุปกรณ์ใหม่? กรุณาสแกน QR หน้าห้องเพื่อจับคู่</p>
+      <div id="reader"></div>
+      <button class="btn btn-scan" id="btnBT" onclick="scanBluetooth()" style="margin-top:10px;">🔍 สแกน Bluetooth</button>
+      <button class="btn btn-qr" id="btnQR" onclick="startQRScanner()">📸 สแกน QR หน้าห้อง</button>
+      
+    </div>
+
+    <div id="status-section" class="hidden">
+      <div class="info-box">
+        📍 <b>ตำแหน่งที่ยืนยัน:</b> <span id="room-name" style="color:#2b7a78; font-weight:bold;">-</span><br>
+        <small id="mac-ref" style="color:#666;">MAC: -</small>
+      </div>
+      <button id="btnSubmit" class="btn btn-submit" onclick="submitData()">💾 บันทึกข้อมูลลงเวลา</button>
+      <button class="btn" style="background:none; color:#999; font-size:0.8rem;" onclick="resetMapping()">🔄 ล้างค่าการจับคู่ห้องนี้</button>
+    </div>
+  </div>
+
+  <script>
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzjIoOE6J4Eo4zNPlM1Tq8d0qpi1P8Zz30BhaUhhDgXZszy4ukc8HW1jHec8kAxCXWJDA/exec";
+
+    // 1. ฐานข้อมูล MAC จริง คู่กับ ชื่อห้อง
+    const macMasterMap = {
+      "C3:00:00:69:AF:4B": "ห้อง ม.1/1",
+      "C3:00:00:61:4D:74": "ห้อง ม.1/2",
+      "C3:00:00:XX:XX:XX": "ห้องธุรการ"
+    };
+
+        const teachers = [
+      "มารียะ มะดีแมง", "รุสนานี แย", "มูฮำมัดซูลฮัน ลามะทา", "กูนัสวาตี นาราวงศ์", "คอตีมะห์ ลามะทา",
+      "คอลีเยาะ กามา", "คอลีเยาะ อาลี", "เจ๊ะบารีย๊ะ มะสาและ", "ซะห์รียะห์ ลามะทา", "ซาเปียน เจ๊ะแว",
+      "ซารีฮา อามิงตีเยาะ", "โซเฟีย เจะกอเดร์", "โซเฟียรา วาเฮ็ง", "ไซตง ตะโละดิง", "ดรุณี บิลังโหลด",
+      "ดอเลาะ นิมิง", "ตอมีซี มูซอ", "ตอยีบ๊ะ วาเด็ง", "ทัพทิวา นามวงษ์", "นัสรินทร์ ดอเลาะ",
+      "นารีมาน ลามะทา", "นาอีด๊ะ เซ็ง", "นูอาชียะห์ เจะลี", "นูไอนี นิปิ", "ปัทมา ยูโซะ",
+      "พาอีซะห์ สามาเล๊ะ", "แพนดี มะลือกะ", "ฟิตรี สะเด็ง", "มะดาเฮ ลามะทา", "มะตีรมีซี ตาเหตาแซ",
+      "มะรอซี แดเมาะเล็ง", "มะสอปี ปิ", "มัสเต๊าะ ดือราอิง", "มุนตาด บิลังโหลด", "มุสลิม ดือราแมง",
+      "มูฮัมมัดตอเฮร์ ลามะทา", "โมฮามัสกามาดิง กายูนิ", "ยามีละ ดอเล๊าะ", "รอซีนะ ลามะทา",
+      "รอบีอะ มาหะหม๊ะ", "รอสีหย๊ะ มะดิง", "แวดุลกอเดร์ ตูแป", "แวอามีเนาะ ตูแป", "สนีดา สนิ",
+      "สุไวบ๊ะ สาแม", "อณิรุต อาแว", "อรวรรณ ฮะ", "อะวาติฟ หะยีมาหะมะ", "อะห์ลาม ตาเฮ",
+      "อับดุลมุสตอฟา รอแง", "อับดุลรอมาน สะมาโระ", "อับดุลเลาะ ปูเตะ", "อับดุลฮาเล็ม ตาเล๊ะ",
+      "อัสมะ บูดิง", "อัสมีดา มายิ", "อาซีซะห์ แตหลง", "อาซียะห์ ยามา", "อาตีย๊ะ โซะ",
+      "อาพีพี ลามะทา", "อามีเนาะ เลาะมะ", "อามีเนาะ รีขะ", "อารีฟ เจะแต", "อารุณี แบรอซะแม",
+      "อาลาวียะห์ กาเจ", "อาแว มูเส็ง", "อาสนี เจ๊ะฮะ", "อาหะมะ ลามะทา", "อาหามะ ซาแมง",
+      "อูมัยมูเน๊าะ สะมะแอ", "เอกลักษณ์ กาดัสซา", "ฮามีดะห์ มะเจ๊ะหะ", "มะนาเซร์ อาแด", "มะนีซัน โซะ", "นาเดีย แตนิมะ"
+    ]; // ใส่รายชื่อครูทั้งหมดที่นี่
+
+    let tempDeviceId = ""; // เก็บ ID สุ่มจาก Bluetooth ชั่วคราว
+    let savedMapping = JSON.parse(localStorage.getItem('beacon_mapping')) || {}; 
+    let html5QrCode;
+
+    window.onload = () => { autocomplete(document.getElementById("empName"), teachers); };
+
+    // --- STEP 1: สแกนบลูทูธก่อน ---
+    async function scanBluetooth() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+        tempDeviceId = device.id;
+
+        // เช็คว่าเคยจับคู่ ID นี้ไว้หรือยัง
+        if (savedMapping[tempDeviceId]) {
+          showStatus(savedMapping[tempDeviceId].room, savedMapping[tempDeviceId].mac);
+          Swal.fire('ยินดีต้อนรับ', 'พบ ' + savedMapping[tempDeviceId].room, 'success');
+        } else {
+          Swal.fire('พบอุปกรณ์ใหม่', 'กรุณาสแกน QR Code หน้าห้องเพื่อยืนยันพิกัด', 'info');
+        }
+      } catch (e) { console.log(e); }
+    }
+
+    // --- STEP 2: สแกน QR เพื่อจับคู่ (Mapping) ---
+    function startQRScanner() {
+      if (!tempDeviceId) {
+        Swal.fire('แจ้งเตือน', 'กรุณากดปุ่มสแกน Bluetooth ก่อนครับ', 'warning');
+        return;
+      }
+      document.getElementById("reader").style.display = "block";
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (decodedMac) => {
+        const mac = decodedMac.trim().toUpperCase();
+        if (macMasterMap[mac]) {
+          const room = macMasterMap[mac];
+          // บันทึกการจับคู่ลงเครื่องครู
+          savedMapping[tempDeviceId] = { mac: mac, room: room };
+          localStorage.setItem('beacon_mapping', JSON.stringify(savedMapping));
+          
+          stopQR();
+          showStatus(room, mac);
+          Swal.fire('จับคู่สำเร็จ', 'มือถือจะจำว่าอุปกรณ์นี้คือ ' + room, 'success');
+        } else {
+          Swal.fire('ไม่พบข้อมูล', 'QR Code นี้ไม่ใช่ MAC ของ Beacon ที่ลงทะเบียนไว้', 'error');
+        }
+      });
+    }
+
+    function stopQR() {
+      if (html5QrCode) {
+        html5QrCode.stop().then(() => { document.getElementById("reader").style.display = "none"; });
+      }
+    }
+
+    function showStatus(room, mac) {
+      document.getElementById('setup-section').classList.add('hidden');
+      document.getElementById('status-section').classList.remove('hidden');
+      document.getElementById('room-name').innerText = room;
+      document.getElementById('mac-ref').innerText = "รหัสอ้างอิง: " + mac;
+    }
+
+    function resetMapping() {
+      localStorage.removeItem('beacon_mapping');
+      location.reload();
+    }
+
+    async function submitData() {
+      const name = document.getElementById("empName").value;
+      if (!name || !teachers.includes(name)) { Swal.fire('ชื่อไม่ถูกต้อง', '', 'warning'); return; }
+
+      const data = savedMapping[tempDeviceId];
+      await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify({
+          employeeName: name,
+          status: document.getElementById("statusSelect").value,
+          beaconId: data.mac, // ส่ง MAC จริงเข้า Google Sheet
+          room: data.room
+        })
+      });
+      Swal.fire('บันทึกเรียบร้อย', '', 'success').then(() => location.reload());
+    }
+
+    // --- Autocomplete ---
+    function autocomplete(inp, arr) {
+      inp.addEventListener("input", function() {
+        let val = this.value; closeAllLists();
+        if (!val) return;
+        const listDiv = document.createElement("div");
+        listDiv.setAttribute("class", "autocomplete-items");
+        this.parentNode.appendChild(listDiv);
+        arr.forEach(name => {
+          if (name.includes(val)) {
+            const item = document.createElement("div");
+            item.innerHTML = name;
+            item.addEventListener("click", () => { inp.value = name; closeAllLists(); });
+            listDiv.appendChild(item);
+          }
+        });
+      });
+      function closeAllLists() {
+        const x = document.getElementsByClassName("autocomplete-items");
+        for (let i = 0; i < x.length; i++) x[i].parentNode.removeChild(x[i]);
+      }
+      document.addEventListener("click", () => closeAllLists());
+    }
+  </script>
+</body>
+</html>
